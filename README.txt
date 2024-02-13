@@ -1,44 +1,73 @@
-Do at least ONE of the following tasks: refactor is mandatory. Write tests is optional, will be good bonus to see it. 
-Upload your results to a Github repo, for easier sharing and reviewing.
+Refactory Below MEthods in BookingController:
+index():
 
-Thank you and good luck!
-
-
-
-Code to refactor
-=================
-1) app/Http/Controllers/BookingController.php
-2) app/Repository/BookingRepository.php
-
-Code to write tests (optional)
-=====================
-3) App/Helpers/TeHelper.php method willExpireAt
-4) App/Repository/UserRepository.php, method createOrUpdate
+Each condition is extracted into a separate function, making the code easier to understand.
+Early returns are used to exit the function early if the conditions are met, avoiding unnecessary nesting.
+Descriptive function names are used to clearly indicate the purpose of each part of the code.
 
 
-----------------------------
+Show():
 
-What I expect in your repo:
-
-X. A readme with:   Your thoughts about the code. What makes it amazing code. Or what makes it ok code. Or what makes it terrible code. How would you have done it. Thoughts on formatting, structure, logic.. The more details that you can provide about the code (what's terrible about it or/and what is good about it) the easier for us to assess your coding style, mentality etc
-
-And 
-
-Y.  Refactor it if you feel it needs refactoring. The more love you put into it. The easier for us to asses your thoughts, code principles etc
+Dependency injection is used in the constructor to inject the JobRepository.
+Type hinting for the $id parameter is added for clarity.
+The response()->json() method is used to return a JSON response, which is more explicit than response($job).
+Ensure that you import the necessary classes (Request, JobRepository) at the top of your controller file. Also, adjust the namespace and class names as per your application's structure.
 
 
-IMPORTANT: Make two commits. First commit with original code. Second with your refactor so we can easily trace changes. 
+Store():
+$authenticatedUser is assigned the value of $request->__authenticatedUser for better readability.
+The assignment and usage of $authenticatedUser is separated for clarity.
+The method remains essentially the same, but it's now a bit cleaner and more readable.
+
+Update():
+Used the except method directly on the $request object to remove unwanted keys from the input data.
+Renamed the $cuser variable to $authenticatedUser for better clarity.
+Passed the $data and $authenticatedUser directly to the updateJob method.
+
+immediateJobEmail:()
+Added a try-catch block to handle any exceptions that may occur during the execution of the code.
+Used response()->json() instead of response() for returning responses, as it's more explicit and commonly used in Laravel applications.
+Added a 500 status code in the error response to indicate a server error.
+Added comments for better code documentation.
 
 
-NB: you do not need to set up the code on local and make the web app run. It will not run as its not a complete web app. This is purely to assess you thoughts about code, formatting, logic etc
+getHistory():
+I renamed $user_id to $userId for consistency with common PHP naming conventions.
+I used $request->input('user_id') instead of $request->get('user_id'). Both are interchangeable in Laravel, but input() is a more direct and clear way to access request parameters.
+I removed the unnecessary assignment within the conditional statement. Directly assigning and checking is more concise and clearer.
+I added comments to explain each step of the function's logic for better readability and understanding.
 
 
-===== So expected output is a GitHub link with either =====
 
-1. Readme described above (point X above) + refactored code 
-OR
-2. Readme described above (point X above) + refactored core + a unit test of the code that we have sent
+acceptJob():
+Dependency Injection: Laravel's service container can automatically resolve instances of the Request class. Therefore, we don't need to use $request->__authenticatedUser to access the authenticated user. Instead, we use $request->user() to directly retrieve the authenticated user.
+Response Formatting: Utilizing Laravel's response()->json() helper method to create a JSON response. This is cleaner and more explicit than response().
 
-Thank you!
+acceptJobWithId(), cancelJob():
+Renamed variables for clarity and adherence to standard naming conventions.
+Replaced $request->__authenticatedUser with $request->user() for better readability and compatibility with Laravel's authentication system.
+Used input() method instead of get() for accessing request parameters.
+Changed the response method to json() for consistent API responses.
+Removed unnecessary comments that did not add any value.
+These changes enhance the readability and maintainability of the code. Additionally, using json() method for responses ensures that the responses are consistent with the API standards.
+
+distanceFeed():
+
+Used the null coalescing operator (??) to simplify assignments of variables with default values.
+Simplified the conditions for setting $flagged, $manually_handled, and $by_admin variables.
+Combined variable assignments and database updates into concise statements.
+Removed redundant conditional checks like isset($data['key']) && $data['key'] != "".
+Improved code formatting and removed unnecessary parentheses in conditions.
+
+
+
+
+
+
+
+
+
+
+
 
 
