@@ -72,7 +72,7 @@ class BookingController extends Controller
      */
     public function show(int $id)
     {
-        $job = $this->jobRepository->with('translatorJobRel.user')->find($id);
+        $job = $this->repository->with('translatorJobRel.user')->find($id);
 
         return response()->json($job);
     }

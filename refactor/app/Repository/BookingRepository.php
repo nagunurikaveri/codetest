@@ -543,8 +543,9 @@ class BookingRepository extends BaseRepository
      */
     public function isNeedToSendPush($user_id)
     {
-        return TeHelper::getUsermeta($user_id, 'not_get_notification') != 'yes';
-
+        $not_get_notification = TeHelper::getUsermeta($user_id, 'not_get_notification');
+        if ($not_get_notification == 'yes') return false;
+        return true;
     }
 
     /**
@@ -557,63 +558,76 @@ class BookingRepository extends BaseRepository
      */
     public function sendPushNotificationToSpecificUsers($users, $job_id, $data, $msg_text, $is_need_delay)
     {
-
+        $logger = $this->initializeLogger();
+    
+        $onesignalAppID = env('APP_ENV') == 'prod' ? config('app.prodOnesignalAppID') : config('app.devOnesignalAppID');
+        $onesignalRestAuthKey = sprintf("Authorization: Basic %s", env('APP_ENV') == 'prod' ? config('app.prodOnesignalApiKey') : config('app.devOnesignalApiKey'));
+    
+        $user_tags = $this->getUserTagsStringFromArray($users);
+        $data['job_id'] = $job_id;
+        $android_sound = $this->getAndroidSound($data);
+        $ios_sound = $this->getIOSSound($data);
+    
+        $fields = $this->prepareNotificationFields($onesignalAppID, $user_tags, $data, $msg_text, $android_sound, $ios_sound, $is_need_delay);
+    
+        $response = $this->sendNotificationRequest($fields, $onesignalRestAuthKey);
+    
+        $logger->addInfo('Push send for job ' . $job_id . ' curl answer', [$response]);
+    }
+    
+    private function initializeLogger()
+    {
         $logger = new Logger('push_logger');
-
         $logger->pushHandler(new StreamHandler(storage_path('logs/push/laravel-' . date('Y-m-d') . '.log'), Logger::DEBUG));
         $logger->pushHandler(new FirePHPHandler());
-        $logger->addInfo('Push send for job ' . $job_id, [$users, $data, $msg_text, $is_need_delay]);
-        if (env('APP_ENV') == 'prod') {
-            $onesignalAppID = config('app.prodOnesignalAppID');
-            $onesignalRestAuthKey = sprintf("Authorization: Basic %s", config('app.prodOnesignalApiKey'));
-        } else {
-            $onesignalAppID = config('app.devOnesignalAppID');
-            $onesignalRestAuthKey = sprintf("Authorization: Basic %s", config('app.devOnesignalApiKey'));
-        }
-
-        $user_tags = $this->getUserTagsStringFromArray($users);
-
-        $data['job_id'] = $job_id;
-        $ios_sound = 'default';
-        $android_sound = 'default';
-
-        if ($data['notification_type'] == 'suitable_job') {
-            if ($data['immediate'] == 'no') {
-                $android_sound = 'normal_booking';
-                $ios_sound = 'normal_booking.mp3';
-            } else {
-                $android_sound = 'emergency_booking';
-                $ios_sound = 'emergency_booking.mp3';
-            }
-        }
-
-        $fields = array(
+        return $logger;
+    }
+    
+    private function getAndroidSound($data)
+    {
+        return ($data['notification_type'] == 'suitable_job' && $data['immediate'] == 'no') ? 'normal_booking' : 'emergency_booking';
+    }
+    
+    private function getIOSSound($data)
+    {
+        return ($data['notification_type'] == 'suitable_job' && $data['immediate'] == 'no') ? 'normal_booking.mp3' : 'emergency_booking.mp3';
+    }
+    
+    private function prepareNotificationFields($onesignalAppID, $user_tags, $data, $msg_text, $android_sound, $ios_sound, $is_need_delay)
+    {
+        $fields = [
             'app_id'         => $onesignalAppID,
             'tags'           => json_decode($user_tags),
             'data'           => $data,
-            'title'          => array('en' => 'DigitalTolk'),
+            'title'          => ['en' => 'DigitalTolk'],
             'contents'       => $msg_text,
             'ios_badgeType'  => 'Increase',
             'ios_badgeCount' => 1,
             'android_sound'  => $android_sound,
             'ios_sound'      => $ios_sound
-        );
+        ];
+    
         if ($is_need_delay) {
             $next_business_time = DateTimeHelper::getNextBusinessTimeString();
             $fields['send_after'] = $next_business_time;
         }
-        $fields = json_encode($fields);
+    
+        return json_encode($fields);
+    }
+    
+    private function sendNotificationRequest($fields, $onesignalRestAuthKey)
+    {
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, "https://onesignal.com/api/v1/notifications");
-        curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json', $onesignalRestAuthKey));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', $onesignalRestAuthKey]);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
         curl_setopt($ch, CURLOPT_HEADER, FALSE);
         curl_setopt($ch, CURLOPT_POST, TRUE);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
         $response = curl_exec($ch);
-        $logger->addInfo('Push send for job ' . $job_id . ' curl answer', [$response]);
         curl_close($ch);
+        return $response;
     }
 
     /**
@@ -623,48 +637,42 @@ class BookingRepository extends BaseRepository
     public function getPotentialTranslators(Job $job)
     {
 
-        $job_type = $job->job_type;
+        $jobType = $job->job_type;
 
-        if ($job_type == 'paid')
-            $translator_type = 'professional';
-        else if ($job_type == 'rws')
-            $translator_type = 'rwstranslator';
-        else if ($job_type == 'unpaid')
-            $translator_type = 'volunteer';
+        // Define translator type based on job type
+        $translatorTypeMap = [
+            'paid' => 'professional',
+            'rws' => 'rwstranslator',
+            'unpaid' => 'volunteer'
+        ];
 
-        $joblanguage = $job->from_language_id;
+        $translatorType = $translatorTypeMap[$jobType] ?? '';
+
+        $jobLanguage = $job->from_language_id;
         $gender = $job->gender;
-        $translator_level = [];
-        if (!empty($job->certified)) {
-            if ($job->certified == 'yes' || $job->certified == 'both') {
-                $translator_level[] = 'Certified';
-                $translator_level[] = 'Certified with specialisation in law';
-                $translator_level[] = 'Certified with specialisation in health care';
-            }
-            elseif($job->certified == 'law' || $job->certified == 'n_law')
-            {
-                $translator_level[] = 'Certified with specialisation in law';
-            }
-            elseif($job->certified == 'health' || $job->certified == 'n_health')
-            {
-                $translator_level[] = 'Certified with specialisation in health care';
-            }
-            else if ($job->certified == 'normal' || $job->certified == 'both') {
-                $translator_level[] = 'Layman';
-                $translator_level[] = 'Read Translation courses';
-            }
-            elseif ($job->certified == null) {
-                $translator_level[] = 'Certified';
-                $translator_level[] = 'Certified with specialisation in law';
-                $translator_level[] = 'Certified with specialisation in health care';
-                $translator_level[] = 'Layman';
-                $translator_level[] = 'Read Translation courses';
-            }
-        }
 
-        $blacklist = UsersBlacklist::where('user_id', $job->user_id)->get();
-        $translatorsId = collect($blacklist)->pluck('translator_id')->all();
-        $users = User::getPotentialUsers($translator_type, $joblanguage, $gender, $translator_level, $translatorsId);
+        $translatorLevel = [];
+
+        // Define translator levels based on certification
+        $certifiedMap = [
+            'yes' => ['Certified', 'Certified with specialisation in law', 'Certified with specialisation in health care'],
+            'both' => ['Certified', 'Certified with specialisation in law', 'Certified with specialisation in health care'],
+            'law' => ['Certified with specialisation in law'],
+            'n_law' => ['Certified with specialisation in law'],
+            'health' => ['Certified with specialisation in health care'],
+            'n_health' => ['Certified with specialisation in health care'],
+            'normal' => ['Layman', 'Read Translation courses'],
+            null => ['Certified', 'Certified with specialisation in law', 'Certified with specialisation in health care', 'Layman', 'Read Translation courses']
+        ];
+
+        $certified = $job->certified ?? null;
+
+        $translatorLevel = $certifiedMap[$certified] ?? [];
+
+        $blacklist = UsersBlacklist::where('user_id', $job->user_id)->pluck('translator_id')->all();
+
+        $potentialUsers = User::getPotentialUsers($translatorType, $jobLanguage, $gender, $translatorLevel, $blacklist);
+
 
 //        foreach ($job_ids as $k => $v)     // checking translator town
 //        {
@@ -688,42 +696,36 @@ class BookingRepository extends BaseRepository
     public function updateJob($id, $data, $cuser)
     {
         $job = Job::find($id);
+        $currentTranslator = $this->getCurrentTranslator($job);
 
-        $current_translator = $job->translatorJobRel->where('cancel_at', Null)->first();
-        if (is_null($current_translator))
-            $current_translator = $job->translatorJobRel->where('completed_at', '!=', Null)->first();
+        $logData = [];
 
-        $log_data = [];
+        $changeTranslator = $this->changeTranslator($currentTranslator, $data, $job);
+        if ($changeTranslator['translatorChanged']) {
+            $logData[] = $changeTranslator['log_data'];
+        }
 
-        $langChanged = false;
-
-        $changeTranslator = $this->changeTranslator($current_translator, $data, $job);
-        if ($changeTranslator['translatorChanged']) $log_data[] = $changeTranslator['log_data'];
-
-        $changeDue = $this->changeDue($job->due, $data['due']);
+        $changeDue = $this->changeDue($job, $data['due']);
         if ($changeDue['dateChanged']) {
-            $old_time = $job->due;
-            $job->due = $data['due'];
-            $log_data[] = $changeDue['log_data'];
+            $logData[] = $changeDue['log_data'];
         }
 
         if ($job->from_language_id != $data['from_language_id']) {
-            $log_data[] = [
+            $logData[] = [
                 'old_lang' => TeHelper::fetchLanguageFromJobId($job->from_language_id),
                 'new_lang' => TeHelper::fetchLanguageFromJobId($data['from_language_id'])
             ];
-            $old_lang = $job->from_language_id;
             $job->from_language_id = $data['from_language_id'];
-            $langChanged = true;
         }
 
         $changeStatus = $this->changeStatus($job, $data, $changeTranslator['translatorChanged']);
-        if ($changeStatus['statusChanged'])
-            $log_data[] = $changeStatus['log_data'];
+        if ($changeStatus['statusChanged']) {
+            $logData[] = $changeStatus['log_data'];
+        }
 
         $job->admin_comments = $data['admin_comments'];
 
-        $this->logger->addInfo('USER #' . $cuser->id . '(' . $cuser->name . ')' . ' has been updated booking <a class="openjob" href="/admin/jobs/' . $id . '">#' . $id . '</a> with data:  ', $log_data);
+        $this->logger->addInfo('USER #' . $cuser->id . '(' . $cuser->name . ')' . ' has updated booking <a class="openjob" href="/admin/jobs/' . $id . '">#' . $id . '</a> with data: ', $logData);
 
         $job->reference = $data['reference'];
 
@@ -732,11 +734,27 @@ class BookingRepository extends BaseRepository
             return ['Updated'];
         } else {
             $job->save();
-            if ($changeDue['dateChanged']) $this->sendChangedDateNotification($job, $old_time);
-            if ($changeTranslator['translatorChanged']) $this->sendChangedTranslatorNotification($job, $current_translator, $changeTranslator['new_translator']);
-            if ($langChanged) $this->sendChangedLangNotification($job, $old_lang);
+            if ($changeDue['dateChanged']) {
+                $this->sendChangedDateNotification($job, $changeDue['old_time']);
+            }
+            if ($changeTranslator['translatorChanged']) {
+                $this->sendChangedTranslatorNotification($job, $currentTranslator, $changeTranslator['new_translator']);
+            }
+            if ($job->from_language_id != $data['from_language_id']) {
+                $this->sendChangedLangNotification($job, $job->from_language_id);
+            }
         }
     }
+
+    private function getCurrentTranslator($job)
+    {
+        $translator = $job->translatorJobRel->where('cancel_at', null)->first();
+        if (is_null($translator)) {
+            $translator = $job->translatorJobRel->where('completed_at', '!=', null)->first();
+        }
+        return $translator;
+    }
+
 
     /**
      * @param $job
